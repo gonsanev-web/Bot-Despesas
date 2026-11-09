@@ -1,0 +1,4 @@
+python-telegram-bot==22.8
+python-dotenv==1.2.4
+# tzdata: a base de fusos horários que o Windows não traz (serve para a hora de Lisboa)
+tzdata
