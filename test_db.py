@@ -1,3 +1,8 @@
+"""Testes da base de dados (db.py) e das datas (tempo.py).
+
+Corre-se com: python test_db.py. Usa uma base de dados só na memória, por isso não toca nas tuas despesas verdadeiras.
+"""
+
 from datetime import date, timedelta
 
 import db

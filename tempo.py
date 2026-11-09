@@ -16,6 +16,8 @@ def agora():
     """Data e hora atuais em Lisboa, sem o fuso agarrado (para guardar como texto simples)."""
     if FUSO is None:
         return datetime.now()
+    # Pede a hora de Lisboa e tira-lhe o fuso horário, para ficar uma data simples que se pode
+    # guardar como texto.
     return datetime.now(FUSO).replace(tzinfo=None)
 
 
@@ -32,6 +34,8 @@ def formatar(momento):
 def segunda_da_semana(dia=None):
     """A segunda-feira da semana do dia dado (ou de hoje). weekday() dá 0 à segunda."""
     dia = dia or hoje()
+    # weekday() dá 0 à segunda, 1 à terça, até 6 ao domingo. Tirar esses dias leva-nos sempre
+    # de volta à segunda-feira dessa semana.
     return dia - timedelta(days=dia.weekday())
 
 
@@ -44,10 +48,14 @@ def primeiro_do_mes(dia=None):
 def primeiro_do_mes_seguinte(dia=None):
     """Dia 1 do mês seguinte. Truque: o dia 28 mais 4 dias cai sempre no mês seguinte."""
     dia = dia or hoje()
+    # Vai para o dia 28 (que existe em todos os meses), soma 4 dias para cair sempre no mês
+    # seguinte e volta ao dia 1 desse mês.
     return (dia.replace(day=28) + timedelta(days=4)).replace(day=1)
 
 
 def primeiro_do_mes_anterior(dia=None):
     """Dia 1 do mês anterior. Tira-se um dia ao dia 1 (cai no mês anterior) e volta-se ao dia 1."""
     primeiro = primeiro_do_mes(dia)
+    # O dia 1 menos um dia é o último dia do mês anterior. Mudando o dia para 1, ficamos no
+    # primeiro dia desse mês.
     return (primeiro - timedelta(days=1)).replace(day=1)

@@ -1,6 +1,11 @@
-"""Testes do /comparar. Não precisam de ligação à internet nem ao Telegram."""
+"""Testes do /comparar e do tratamento de erros. Não precisam de ligação à internet."""
 
+import asyncio
+import logging
+import types
 from datetime import datetime, time, timedelta
+
+from telegram.error import BadRequest
 
 import db
 import handlers
@@ -100,5 +105,20 @@ assert "Este mês: 10,00 €" in texto
 assert "Mês passado: 12,00 €" in texto  # as despesas do dia 1 e do último dia contam as duas
 assert "Diferença: -2,00 € (-17%)" in texto  # -200 / 1200 = -16,7%
 print("mês: certo")
+
+# --- 4. erro(): tocar duas vezes no mesmo botão não é um erro a sério
+registos = []  # aqui guardamos o que o erro() tentar escrever no registo
+logging_original = logging.error
+logging.error = lambda *args, **kwargs: registos.append(args)  # troca o logging.error por um apanhador
+
+# Com update=None o erro() só regista (não tenta responder), por isso não precisamos de um Update
+asyncio.run(handlers.erro(None, types.SimpleNamespace(error=BadRequest("Message is not modified: igual"))))
+assert registos == []  # este erro é ignorado em silêncio
+
+asyncio.run(handlers.erro(None, types.SimpleNamespace(error=BadRequest("Chat not found"))))
+assert len(registos) == 1  # os outros erros continuam a ser registados
+
+logging.error = logging_original  # repõe o logging.error verdadeiro
+print("erro(): certo")
 
 print("Tudo certo!")

@@ -54,6 +54,8 @@ def registar_handlers(app):
     # Só mensagens novas: se editares uma mensagem, o bot não a regista outra vez
     novas = filters.UpdateType.MESSAGE
 
+    # Cada comando (o que escreves a seguir à barra, como /semana) ligado à função que lhe
+    # responde.
     comandos = {
         "id": handlers.meu_id,
         "start": handlers.start,
@@ -95,6 +97,8 @@ def registar_handlers(app):
 
 def main():
     """Modo PC: monta o bot e fica a perguntar ao Telegram se há mensagens novas."""
+    # Cria o bot com o token (a 'palavra-passe' dele, lida do .env). O post_init manda o menu
+    # de comandos ao Telegram quando o bot arranca.
     app = ApplicationBuilder().token(os.environ["BOT_TOKEN"]).post_init(depois_de_iniciar).build()
 
     # A ligação à base de dados abre uma vez e fica guardada, para todas as funções a usarem
@@ -104,6 +108,8 @@ def main():
     app.bot_data["ligacao"] = ligacao
 
     registar_handlers(app)
+    # Fica a perguntar ao Telegram, sem parar, se há mensagens novas. Só termina quando
+    # carregas em Ctrl+C.
     app.run_polling()
 
 

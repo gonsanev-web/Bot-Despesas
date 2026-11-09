@@ -33,6 +33,9 @@ def normalizar(texto):
 
 def palavras_da_descricao(descricao):
     """Lista de palavras limpas e com significado: 'Uma pizza' dá ['pizza']."""
+    # Percorre as palavras já limpas e fica só com as que dizem alguma coisa: tira as da lista
+    # PALAVRAS_A_IGNORAR (como 'uma' ou 'de') e os números soltos (como o '2' de '2 bolos'),
+    # porque não dizem o que foi comprado.
     return [
         palavra
         for palavra in normalizar(descricao).split()
@@ -51,6 +54,8 @@ def parse_valor(texto):
     # de comparar com 0, porque comparar um nan dá erro.
     if not valor.is_finite() or valor <= 0 or valor > VALOR_MAXIMO:
         return None
+    # Passa de euros para cêntimos (3.5 vira 350). O bot guarda sempre cêntimos inteiros, para
+    # as somas nunca terem erros de arredondamento.
     return int(valor * 100)
 
 
@@ -92,17 +97,27 @@ def parse_despesa(texto):
 
 def separar_dia(texto):
     """Tira 'ontem', 'anteontem' ou 'hoje' do início: 'ontem 12 jantar' dá (1, '12 jantar')."""
+    # Separa a primeira palavra do resto: em 'ontem 12 jantar' ficam 'ontem' e '12 jantar'.
     partes = texto.strip().split(maxsplit=1)
+    # Se a primeira palavra for hoje, ontem ou anteontem, devolve quantos dias atrás é e o
+    # resto da mensagem já sem essa palavra. O normalizar faz 'Ontem' e 'ontem' valerem o
+    # mesmo.
     if partes and normalizar(partes[0]) in DIAS_ATRAS:
         resto = partes[1] if len(partes) > 1 else ""
         return DIAS_ATRAS[normalizar(partes[0])], resto
+    # A mensagem não começa por um dia: a despesa é de hoje (0 dias atrás) e o texto fica como
+    # estava.
     return 0, texto
 
 
 def parse_mensagem(texto):
     """Junta tudo: devolve (cêntimos, descrição, dias_atrás) ou None se não for uma despesa."""
+    # Primeiro tira o 'ontem' ou 'anteontem' do início (se existir). Depois lê o valor e a
+    # descrição do que sobrou.
     dias, resto = separar_dia(texto)
     resultado = parse_despesa(resto)
+    # Se o resto não for 'valor + descrição' (por exemplo, só 'olá'), a mensagem não é uma
+    # despesa.
     if resultado is None:
         return None
     centimos, descricao = resultado

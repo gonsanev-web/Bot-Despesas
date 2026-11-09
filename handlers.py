@@ -8,18 +8,22 @@ import os
 from datetime import date, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 import db
 import tempo
 from parsing import normalizar, palavras_da_descricao, parse_mensagem, parse_valor
 
+# Nomes dos meses, para o /mes escrever 'Mês de novembro'. Janeiro é a posição 0 da lista.
 MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
          "agosto", "setembro", "outubro", "novembro", "dezembro"]
 
 # O Telegram recusa mensagens com mais de 4096 caracteres. Cortamos antes disso.
 LIMITE_MENSAGEM = 3500
 
+# O texto que o /start e o /ajuda mostram. Se criares um comando novo, lembra-te de o acrescentar
+# aqui.
 TEXTO_AJUDA = (
     "Escreve uma despesa: 3,5 café  (ou: ontem 12 jantar)\n\n"
     "/desfazer  apaga o último registo\n"
@@ -41,7 +45,11 @@ TEXTO_AJUDA = (
 
 def autorizado(update: Update) -> bool:
     """True só se a mensagem vier de ti (o teu número está no .env, em MEU_ID)."""
+    # Quem escreveu a mensagem. Pode não existir em alguns tipos de mensagens, por isso se
+    # testa a seguir.
     utilizador = update.effective_user
+    # O teu número de utilizador vem do ficheiro .env. Se faltar, fica 0 e ninguém é
+    # autorizado.
     meu_id = int(os.getenv("MEU_ID", "0"))
     return utilizador is not None and utilizador.id == meu_id
 
@@ -89,20 +97,27 @@ def teclado(botoes):
 
 async def enviar_longo(mensagem, texto):
     """Envia um texto grande em vários pedaços, cortando sempre entre linhas."""
+    # Vai juntando linhas num pedaço. Quando mais uma linha faria o pedaço passar o limite do
+    # Telegram, envia o que já tem e começa outro. Assim corta-se sempre entre linhas, nunca a
+    # meio.
     pedaco = ""
     for linha in texto.split("\n"):
         if len(pedaco) + len(linha) + 1 > LIMITE_MENSAGEM:
             await mensagem.reply_text(pedaco)
             pedaco = ""
         pedaco += linha + "\n"
+    # No fim, envia o que sobrou (se não estiver vazio).
     if pedaco.strip():
         await mensagem.reply_text(pedaco)
 
 
 def rotulo_dia(criada_em):
     """' — ontem', ' — anteontem' ou ' — 05/11' se a despesa não for de hoje."""
+    # criada_em é do género '2026-11-08 20:15:00': as 10 primeiras letras são a data. Depois
+    # conta-se quantos dias passaram desde então.
     dia = date.fromisoformat(criada_em[:10])
     dias = (tempo.hoje() - dia).days
+    # 0 dias quer dizer hoje, e nesse caso não se escreve nada ao lado do registo.
     if dias == 0:
         return ""
     if dias == 1:
@@ -114,6 +129,8 @@ def rotulo_dia(criada_em):
 
 def resumo(ligacao, despesa_id):
     """A primeira linha de quase todas as respostas: 'Registado: 3,50 € (café)'."""
+    # Vai à base de dados buscar a despesa pelo número dela e monta a frase com o valor, a
+    # descrição e (se não for de hoje) o dia.
     centimos, descricao, criada_em = db.obter_despesa(ligacao, despesa_id)
     return f"Registado: {euros(centimos)} ({descricao}){rotulo_dia(criada_em)}"
 
@@ -123,10 +140,15 @@ def botoes_categorias(ligacao, despesa_id):
 
     Etiquetas: c:<despesa>:<categoria> (0 = sem categoria) e nc:<despesa> (nova).
     """
+    # Um botão por categoria. O texto do botão é o nome. A etiqueta escondida
+    # (c:despesa:categoria) é o que o Telegram nos devolve quando tocas, para sabermos que
+    # despesa e que categoria escolheste.
     botoes = [
         (nome, f"c:{despesa_id}:{categoria_id}")
         for categoria_id, nome in db.listar_categorias(ligacao)
     ]
+    # Dois botões fixos no fim: criar uma categoria nova, ou deixar a despesa sem categoria (o
+    # 0 quer dizer 'nenhuma').
     botoes.append(("➕ Nova", f"nc:{despesa_id}"))
     botoes.append(("Sem categoria", f"c:{despesa_id}:0"))
     return botoes
@@ -134,13 +156,19 @@ def botoes_categorias(ligacao, despesa_id):
 
 def concluir(ligacao, despesa_id, categoria_id, subcategoria_id):
     """Guarda a classificação, ensina a palavra ao bot e devolve o texto final."""
+    # Passo 1: grava na despesa a categoria (e subcategoria) que escolheste.
     db.classificar_despesa(ligacao, despesa_id, categoria_id, subcategoria_id)
+    # Passo 2: ensina o bot. A palavra principal desta despesa passa a apontar para esta
+    # categoria, e da próxima vez ele já sabe sem perguntar. Se escolheste 'Sem categoria',
+    # não há nada a aprender.
     if categoria_id is not None:
         descricao = db.obter_despesa(ligacao, despesa_id)[1]
         palavras = palavras_da_descricao(descricao)
         if palavras:
             # O bot aprende a primeira palavra com significado ("uma pizza" ensina "pizza")
             db.aprender_palavra(ligacao, palavras[0], categoria_id, subcategoria_id)
+    # Passo 3: monta a resposta final, com a frase do registo e, por baixo, 'Categoria ›
+    # Subcategoria'.
     destino = db.nome_destino(ligacao, categoria_id, subcategoria_id)
     return f"{resumo(ligacao, despesa_id)}\n{destino}"
 
@@ -149,6 +177,8 @@ def texto_aviso(gasto, orcamento):
     """A mensagem do aviso de orçamento."""
     if gasto >= orcamento:
         return f"Atenção: passaste o orçamento da semana ({euros(gasto)} de {euros(orcamento)})."
+    # Que parte do orçamento já gastaste, em percentagem inteira (o // é a divisão sem
+    # decimais).
     percentagem = gasto * 100 // orcamento
     falta = orcamento - gasto
     return (
@@ -160,14 +190,19 @@ def texto_aviso(gasto, orcamento):
 async def avisar_se_preciso(mensagem, ligacao):
     """Manda o aviso do orçamento, se for a altura. Vai numa mensagem à parte,
     para não desaparecer quando os botões da categoria são substituídos."""
+    # verificar_aviso devolve None se não for altura de avisar (sem orçamento, abaixo do
+    # limite, ou já avisado esta semana).
     aviso = db.verificar_aviso(ligacao)
     if aviso:
+        # O '_' ignora a percentagem, que aqui não faz falta.
         gasto, orcamento, _ = aviso
         await mensagem.reply_text(texto_aviso(gasto, orcamento))
 
 
 async def despesa_existe(query, ligacao, despesa_id):
     """Se apagaste a despesa com /desfazer, os botões antigos deixam de servir."""
+    # Os botões antigos podem apontar para uma despesa que entretanto apagaste com /desfazer.
+    # Em vez de dar erro, avisa.
     if db.obter_despesa(ligacao, despesa_id) is None:
         await query.edit_message_text("Esse registo já foi apagado.")
         return False
@@ -182,6 +217,8 @@ def formatar_resumo(titulo, total, por_categoria, orcamento=None):
     if orcamento:
         # O "//" é a divisão inteira, sem decimais: 107,5% aparece como 107%
         linha_total += f" de {euros(orcamento)} ({total * 100 // orcamento}%)"
+    # Cabeçalho (título e total) e uma linha em branco. A seguir vem uma linha por categoria,
+    # no formato 'Nome: valor'.
     linhas = [titulo, linha_total, ""]
     linhas += [f"{nome}: {euros(centimos)}" for nome, centimos in por_categoria]
     return "\n".join(linhas)
@@ -252,13 +289,19 @@ async def texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await tratar_nome_novo(mensagem, context, pendente)
         return
 
+    # Tenta ler 'valor + descrição' (e o 'ontem' ou 'anteontem', se vier). Se não der, a
+    # mensagem não é uma despesa.
     resultado = parse_mensagem(mensagem.text)
     if resultado is None:
         await mensagem.reply_text("Não percebi. Escreve assim: 3,5 café  (ou: ontem 12 jantar)")
         return
 
     centimos, descricao, dias = resultado
+    # Se escreveste 'ontem', a despesa fica com a data de há 1 dia (dias vale 0 quando não
+    # disseste nada).
     quando = tempo.agora() - timedelta(days=dias)
+    # Vê se o bot já conhece alguma palavra da descrição. A categoria vem da tabela das
+    # palavras aprendidas.
     destino = db.encontrar_destino(ligacao, descricao)
 
     if destino is None:
@@ -276,31 +319,42 @@ async def texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nome = db.nome_destino(ligacao, categoria_id, subcategoria_id)
         await mensagem.reply_text(f"{resumo(ligacao, despesa_id)}\n{nome}")
 
+    # Depois de registar, vê se a semana já chegou à percentagem do orçamento e, se sim, avisa
+    # numa mensagem à parte.
     await avisar_se_preciso(mensagem, ligacao)
 
 
 async def tratar_nome_novo(mensagem, context, pendente):
     """Recebe o nome de uma categoria ou subcategoria nova (depois de tocares em '➕ Nova')."""
     ligacao = ligacao_de(context)
+    # O texto que escreveste é o nome da categoria ou subcategoria nova.
     nome = mensagem.text.strip()
 
+    # Escrever 'cancelar' desiste: a despesa fica sem categoria e podes classificá-la depois
+    # com /corrigir.
     if normalizar(nome) == "cancelar":
         context.user_data.pop("pendente", None)
         await mensagem.reply_text(
             "Cancelado. A despesa ficou sem categoria (usa /corrigir para a classificar)."
         )
         return
+    # Nomes vazios ou enormes não servem (os botões ficavam feios), por isso pede-se outro.
     if not 1 <= len(nome) <= 30:
         await mensagem.reply_text("O nome tem de ter entre 1 e 30 letras. Escreve outra vez, ou 'cancelar'.")
         return
 
+    # O 'pendente' lembra qual era a despesa à espera de categoria e se o nome é de uma
+    # categoria ou de uma subcategoria.
     despesa_id = pendente["despesa_id"]
+    # Se entretanto apagaste a despesa com /desfazer, já não há nada a classificar.
     if db.obter_despesa(ligacao, despesa_id) is None:
         context.user_data.pop("pendente", None)
         await mensagem.reply_text("Esse registo já foi apagado.")
         return
 
     nome = nome[0].upper() + nome[1:]  # primeira letra em maiúscula
+    # Cria a categoria nova (ou a subcategoria nova, dentro da categoria que escolheste antes)
+    # e guarda logo a classificação.
     if pendente["tipo"] == "categoria":
         categoria_id = db.criar_categoria(ligacao, nome)
         subcategoria_id = None
@@ -320,6 +374,8 @@ async def escolheu_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Tocaste numa categoria (etiqueta c:<despesa>:<categoria>)."""
     query = update.callback_query
     await query.answer()  # diz ao Telegram que recebemos o toque (tira o "a carregar")
+    # A etiqueta do botão é do género 'c:12:3'. Parte-se nos ':' para ficar com o número da
+    # despesa (12) e o da categoria (3). O '_' ignora o 'c'.
     _, despesa_id, categoria_id = query.data.split(":")
     despesa_id, categoria_id = int(despesa_id), int(categoria_id)
     ligacao = ligacao_de(context)
@@ -331,11 +387,15 @@ async def escolheu_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(concluir(ligacao, despesa_id, None, None))
         return
 
+    # Se a categoria tem subcategorias, pergunta qual é (com um botão 'Não tem'). Se não tem,
+    # conclui logo.
     subcategorias = db.listar_subcategorias(ligacao, categoria_id)
     if not subcategorias:  # esta categoria não tem subcategorias: não pergunta mais nada
         await query.edit_message_text(concluir(ligacao, despesa_id, categoria_id, None))
         return
 
+    # Um botão por subcategoria. A etiqueta s:despesa:categoria:subcategoria leva os três
+    # números.
     botoes = [
         (nome, f"s:{despesa_id}:{categoria_id}:{subcategoria_id}")
         for subcategoria_id, nome in subcategorias
@@ -368,6 +428,8 @@ async def pediu_nova_categoria(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     despesa_id = int(query.data.split(":")[1])
+    # Lembra que a tua próxima mensagem de texto é o nome da categoria nova, e para que
+    # despesa é. O user_data guarda coisas por pessoa enquanto o bot está a correr.
     context.user_data["pendente"] = {"tipo": "categoria", "despesa_id": despesa_id}
     await query.edit_message_text("Escreve o nome da nova categoria (ou 'cancelar'):")
 
@@ -378,6 +440,7 @@ async def pediu_nova_subcategoria(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
     _, despesa_id, categoria_id = query.data.split(":")
+    # Igual ao anterior, mas guarda também a categoria onde a subcategoria nova vai ficar.
     context.user_data["pendente"] = {
         "tipo": "subcategoria",
         "despesa_id": int(despesa_id),
@@ -392,6 +455,8 @@ async def pediu_nova_subcategoria(update: Update, context: ContextTypes.DEFAULT_
 @so_dono
 async def desfazer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/desfazer: apaga o último registo."""
+    # Apaga a despesa mais recente e devolve (valor, descrição), para te mostrar o que foi
+    # apagado.
     apagada = db.apagar_ultima(ligacao_de(context))
     if apagada is None:
         await update.effective_message.reply_text("Não há nada para desfazer.")
@@ -404,6 +469,8 @@ async def desfazer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def corrigir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/corrigir: volta a perguntar a categoria da última despesa (e o bot reaprende a palavra)."""
     ligacao = ligacao_de(context)
+    # Pega na última despesa e volta a mostrar os botões de categoria. Quando escolheres, o
+    # bot reaprende a palavra.
     despesa_id = db.id_ultima_despesa(ligacao)
     if despesa_id is None:
         await update.effective_message.reply_text("Ainda não há despesas.")
@@ -426,6 +493,7 @@ async def orcamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensagem = update.effective_message
     ligacao = ligacao_de(context)
 
+    # '/orcamento' sozinho (sem número) só mostra o orçamento atual.
     if not context.args:
         valor, percentagem = db.ler_orcamento(ligacao)
         if valor is None:
@@ -437,11 +505,13 @@ async def orcamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
+    # O que escreveste a seguir ao comando (o '60' de '/orcamento 60') passa para cêntimos.
     centimos = parse_valor(context.args[0])
     if centimos is None:
         await mensagem.reply_text("Não percebi o valor. Exemplo: /orcamento 60")
         return
 
+    # Guarda o novo orçamento (e deixa o aviso disponível outra vez).
     db.definir_orcamento(ligacao, centimos)
     _, percentagem = db.ler_orcamento(ligacao)
     await mensagem.reply_text(
@@ -457,6 +527,8 @@ async def avisar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensagem = update.effective_message
     ligacao = ligacao_de(context)
 
+    # Só aceita um número inteiro entre 1 e 100: a percentagem do orçamento a que queres ser
+    # avisado.
     if not context.args or not context.args[0].isdigit() or not 1 <= int(context.args[0]) <= 100:
         await mensagem.reply_text("Usa assim: /avisar 80  (um número de 1 a 100)")
         return
@@ -482,6 +554,7 @@ async def hoje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/hoje: o que gastaste hoje."""
     ligacao = ligacao_de(context)
     dia = tempo.hoje()
+    # De hoje (incluído) até amanhã (excluído).
     total, por_categoria = db.resumo_periodo(ligacao, dia, dia + timedelta(days=1))
     await update.effective_message.reply_text(
         formatar_resumo(f"Hoje, {dia:%d/%m}", total, por_categoria)
@@ -492,8 +565,11 @@ async def hoje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def semana(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/semana: cada gasto desde segunda-feira, por categoria, e quanto do orçamento já foi."""
     ligacao = ligacao_de(context)
+    # A semana vai de segunda a domingo: começamos pela segunda-feira desta semana.
     segunda = tempo.segunda_da_semana()
+    # Todas as despesas da semana, de segunda a domingo, agrupadas por categoria.
     grupos = db.despesas_por_categoria(ligacao, segunda, segunda + timedelta(days=7))
+    # Só interessa o orçamento (o '_' ignora a percentagem do aviso).
     valor, _ = db.ler_orcamento(ligacao)
     # enviar_longo parte o texto em várias mensagens se passar o limite do Telegram
     await enviar_longo(
@@ -507,8 +583,12 @@ async def mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/mes: cada gasto deste mês, por categoria, comparado com o mês anterior inteiro."""
     ligacao = ligacao_de(context)
     primeiro = tempo.primeiro_do_mes()
+    # As despesas do mês inteiro, do dia 1 ao último dia, agrupadas por categoria.
     grupos = db.despesas_por_categoria(ligacao, primeiro, tempo.primeiro_do_mes_seguinte())
+    # Só o total do mês anterior inteiro, para teres uma referência.
     anterior, _ = db.resumo_periodo(ligacao, tempo.primeiro_do_mes_anterior(), primeiro)
+    # MESES[primeiro.month - 1]: o mês 11 (novembro) está na posição 10 da lista, porque a
+    # lista começa em 0.
     texto_final = formatar_detalhado(f"Mês de {MESES[primeiro.month - 1]}", grupos)
     texto_final += f"\n\nMês anterior: {euros(anterior)}"
     await enviar_longo(update.effective_message, texto_final)
@@ -616,6 +696,8 @@ async def comparar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if tipo in ("semana", "mes"):
             await mensagem.reply_text(texto_comparar(ligacao_de(context), tipo))
             return
+    # Sem argumento (ou com um que não conhecemos), mostra dois botões para escolheres o
+    # período.
     botoes = [("Semana", "cmp:semana"), ("Mês", "cmp:mes")]
     await mensagem.reply_text("Comparar o quê?", reply_markup=teclado(botoes))
 
@@ -625,25 +707,34 @@ async def escolheu_comparar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Tocaste em Semana ou Mês no /comparar (etiqueta cmp:semana ou cmp:mes)."""
     query = update.callback_query
     await query.answer()
+    # A etiqueta é 'cmp:semana' ou 'cmp:mes'. O [1] fica com a parte depois dos ':'.
     tipo = query.data.split(":")[1]
+    # Troca a pergunta 'Comparar o quê?' pela comparação. Se tocares duas vezes no mesmo
+    # botão, o texto seria igual e o Telegram recusa a edição; o erro() ignora esse caso em
+    # silêncio.
     await query.edit_message_text(texto_comparar(ligacao_de(context), tipo))
 
 
 def texto_lista(ligacao, categoria_id):
     """Movimentos de uma categoria nesta semana. categoria_id 0 = sem categoria."""
+    # Os movimentos contam-se de segunda até domingo desta semana.
     segunda = tempo.segunda_da_semana()
+    # O 'categoria_id or None' troca o 0 (que quer dizer 'sem categoria') por None, que é como
+    # a base de dados guarda as despesas sem categoria.
     movimentos = db.listar_movimentos(
         ligacao, categoria_id or None, segunda, segunda + timedelta(days=7)
     )
     nome = db.nome_destino(ligacao, categoria_id or None, None)
     if not movimentos:
         return f"{nome}: sem despesas esta semana."
+    # Soma só os cêntimos de cada movimento. A data e a descrição ignoram-se com '_'.
     total = sum(centimos for _, _, centimos in movimentos)
     linhas = [f"{nome}, semana desde {segunda:%d/%m}"]
     mostrados = movimentos[-40:]  # só os 40 mais recentes, para a mensagem não ficar enorme
     if len(movimentos) > len(mostrados):
         linhas.append(f"(+{len(movimentos) - len(mostrados)} mais antigos)")
     for criada_em, descricao, centimos in mostrados:
+        # criada_em é do género '2026-11-08 20:15:00': as 10 primeiras letras são o dia.
         dia = date.fromisoformat(criada_em[:10])
         linhas.append(f"{dia:%d/%m}  {descricao}  {euros(centimos)}")
     linhas.append(f"Total: {euros(total)}")
@@ -662,7 +753,11 @@ async def lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await mensagem.reply_text("De que categoria?", reply_markup=teclado(botoes))
         return
 
+    # Junta tudo o que escreveste a seguir ao /lista, porque o nome pode ter várias palavras
+    # (por exemplo '/lista jogos e subscrições').
     pedido = " ".join(context.args)
+    # 'sem' ou 'sem categoria' escolhe as despesas sem categoria (o 0 é o código para isso).
+    # Caso contrário procura pelo nome, e aceita só o início ('refe').
     if normalizar(pedido).startswith("sem"):
         categoria_id = 0
     else:
@@ -685,6 +780,8 @@ async def escolheu_lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @so_dono
 async def temas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/temas: tudo o que o bot sabe (categorias, subcategorias e palavras)."""
+    # Uma linha por categoria. Se só tem palavras sem subcategorias, mostra-as na mesma linha.
+    # Se tem subcategorias, mostra uma linha por cada uma.
     linhas = []
     for categoria, grupos in db.temas(ligacao_de(context)):
         if not grupos:
@@ -739,6 +836,7 @@ async def confirmou_limpar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Resposta aos botões do /limpar (etiquetas limpar:sim e limpar:nao)."""
     query = update.callback_query
     await query.answer()
+    # O botão 'Apagar tudo' tem a etiqueta limpar:sim, e o 'Cancelar' tem limpar:nao.
     if query.data == "limpar:sim":
         apagadas = db.limpar_despesas(ligacao_de(context))
         await query.edit_message_text(f"Feito: {apagadas} despesas apagadas.")
@@ -751,6 +849,11 @@ async def confirmou_limpar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def erro(update, context: ContextTypes.DEFAULT_TYPE):
     """Chamada quando qualquer outra função falha. Escreve o detalhe no terminal e avisa-te."""
+    # Tocar duas vezes no mesmo botão faz o Telegram recusar a edição ("Message is not
+    # modified"), porque o texto novo seria igual ao que já lá está. Não é um erro a sério:
+    # ignora-se sem avisar.
+    if isinstance(context.error, BadRequest) and "not modified" in str(context.error).lower():
+        return
     logging.error("Erro ao tratar uma mensagem", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message is not None:
         try:

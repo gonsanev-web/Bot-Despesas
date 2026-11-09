@@ -1,3 +1,8 @@
+"""Testes da leitura do texto (parsing.py): valores, descrições e dias.
+
+Corre-se com: python test_parsing.py. Se alguma linha falhar, o Python mostra qual.
+"""
+
 from parsing import (
     normalizar,
     palavras_da_descricao,
