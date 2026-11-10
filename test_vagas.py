@@ -173,9 +173,52 @@ r = cliente().get("/vagas/icone.png", base_url=HTTPS)
 assert r.status_code == 200 and r.mimetype == "image/png" and r.data[:8] == b"\x89PNG\r\n\x1a\n"
 assert "public" in r.headers["Cache-Control"]
 corpo = cliente().get("/vagas/entrar", base_url=HTTPS).get_data(as_text=True)
-assert 'rel="apple-touch-icon" href="/vagas/icone.png"' in corpo
+versao = pagina_vagas.versao_do_icone()
+assert len(versao) == 8  # o ícone de verdade existe e tem versão
+assert 'rel="apple-touch-icon" href="/vagas/icone.png?v=' + versao + '"' in corpo
 assert 'name="apple-mobile-web-app-capable" content="yes"' in corpo
+r = cliente().get("/vagas/icone.png?v=" + versao, base_url=HTTPS)  # o "?v=" não estraga o pedido
+assert r.status_code == 200 and r.data[:8] == b"\x89PNG\r\n\x1a\n"
 print("ícone público e marcas de app no formulário: certos")
+
+# --- 11b. A versão do ícone muda quando a imagem muda (assim o iPhone vai buscar a nova)
+original = pagina_vagas.PASTA_DO_MODULO
+pasta_icone = os.path.join(pasta, "icone")
+os.makedirs(pasta_icone)
+pagina_vagas.PASTA_DO_MODULO = pasta_icone  # troca a pasta do ícone por uma de teste
+try:
+    assert pagina_vagas.versao_do_icone() == ""  # sem imagem, sem versão
+    assert pagina_vagas._com_icone_versionado('href="/vagas/icone.png"') == 'href="/vagas/icone.png"'
+    with open(os.path.join(pasta_icone, "vagas_icone.png"), "wb") as f:
+        f.write(b"imagem um")
+    versao_um = pagina_vagas.versao_do_icone()
+    with open(os.path.join(pasta_icone, "vagas_icone.png"), "wb") as f:
+        f.write(b"imagem dois")
+    versao_dois = pagina_vagas.versao_do_icone()
+    assert len(versao_um) == 8 and len(versao_dois) == 8 and versao_um != versao_dois
+    # Funciona em texto e em bytes (o vagas.html é lido como bytes)
+    assert pagina_vagas._com_icone_versionado('<link href="/vagas/icone.png">') == (
+        '<link href="/vagas/icone.png?v=' + versao_dois + '">'
+    )
+    assert pagina_vagas._com_icone_versionado(b'<link href="/vagas/icone.png">') == (
+        b'<link href="/vagas/icone.png?v=' + versao_dois.encode() + b'">'
+    )
+finally:
+    pagina_vagas.PASTA_DO_MODULO = original  # repõe a pasta verdadeira
+print("versão do ícone: muda com a imagem")
+
+# --- 11c. O vagas.html que vem do GitHub também fica com o ícone versionado (para quem já entrou)
+limpar_falhas()
+escrever(
+    os.path.join(pasta_vagas, "vagas.html"),
+    '<!doctype html><html><head><link rel="apple-touch-icon" href="/vagas/icone.png"></head><body>x</body></html>',
+)
+c = cliente()
+entrar(c)
+corpo = c.get("/vagas", base_url=HTTPS).get_data(as_text=True)
+assert 'href="/vagas/icone.png?v=' + versao + '"' in corpo
+escrever(os.path.join(pasta_vagas, "vagas.html"), PAGINA)  # repõe a página de teste do resto
+print("vagas.html: ícone com versão")
 
 # --- 12. Sair apaga o cookie
 limpar_falhas()

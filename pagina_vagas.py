@@ -265,8 +265,44 @@ def _proteger(resposta, csp=CSP_DO_FORMULARIO):
     return resposta
 
 
+def versao_do_icone():
+    """Um código curto que muda sempre que a imagem do ícone muda (vazio se a imagem não existir).
+
+    O iPhone guarda o ícone pelo endereço. Se o endereço fosse sempre o mesmo, ele continuaria a
+    mostrar o ícone antigo mesmo depois de trocares a imagem. Com este código no endereço, uma
+    imagem nova passa a ter um endereço novo e o iPhone vai buscá-la de certeza.
+    """
+    # Lê a imagem e calcula uma "impressão digital" dela (só os primeiros 8 caracteres chegam)
+    try:
+        with open(os.path.join(PASTA_DO_MODULO, "vagas_icone.png"), "rb") as ficheiro:
+            return hashlib.sha256(ficheiro.read()).hexdigest()[:8]
+    except OSError:
+        return ""
+
+
+def _com_icone_versionado(corpo):
+    """Acrescenta o código da versão ao endereço do ícone que está na página (texto ou bytes).
+
+    Serve tanto para o formulário da palavra-passe como para o vagas.html que vem do GitHub,
+    por isso o vigia de estágios não precisa de saber nada disto.
+    """
+    # Sem imagem não há versão: deixa a página como está
+    versao = versao_do_icone()
+    if not versao:
+        return corpo
+
+    # Troca o endereço simples pelo endereço com versão (a rota do ícone ignora o "?v=")
+    antigo = 'href="/vagas/icone.png"'
+    novo = 'href="/vagas/icone.png?v=' + versao + '"'
+    if isinstance(corpo, bytes):
+        return corpo.replace(antigo.encode("utf-8"), novo.encode("utf-8"))
+    return corpo.replace(antigo, novo)
+
+
 def _pagina(corpo, estado=200, csp=CSP_DO_FORMULARIO):
     """Uma resposta HTML já com os cabeçalhos de segurança."""
+    # O ícone leva a versão no endereço, para o iPhone nunca ficar preso a um ícone antigo
+    corpo = _com_icone_versionado(corpo)
     resposta = Response(corpo, status=estado, content_type="text/html; charset=utf-8")
     return _proteger(resposta, csp)
 
