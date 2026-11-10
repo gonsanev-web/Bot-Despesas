@@ -69,6 +69,17 @@ _ultimo_update = 0
 # O nome 'application' é o que a PythonAnywhere procura neste tipo de programa
 application = Flask(__name__)
 
+# A página de vagas do outro bot (o vigia de estágios) vive neste mesmo site, no endereço /vagas,
+# porque a conta gratuita só permite um site. O código dela está noutro ficheiro (pagina_vagas.py).
+# Fica dentro de um try/except de propósito: se algo nela falhar, o bot de despesas continua
+# a funcionar na mesma e o erro aparece no 'error log'.
+try:
+    from pagina_vagas import vagas as rotas_das_vagas
+
+    application.register_blueprint(rotas_das_vagas)
+except Exception:
+    logging.exception("A página de vagas não arrancou (o bot de despesas continua a funcionar)")
+
 
 async def tratar_update(dados):
     """Entrega uma mensagem (já em formato JSON) ao bot, que responde como no PC.

@@ -16,6 +16,8 @@ Feito em Python com `python-telegram-bot` e SQLite. Só responde ao dono (o teu 
 | `parsing.py` | Lê o texto (`3,5 café`, `ontem 12 jantar`) |
 | `tempo.py` | Datas e horas de Lisboa; semana de segunda a domingo |
 | `servidor_web.py` | Arranca o bot **no alojamento** (modo webhook) |
+| `pagina_vagas.py` | A página `/vagas` do vigia de estágios, com palavra-passe (ver Passo D) |
+| `vagas_icone.png` | O ícone da app no ecrã principal do iPhone |
 | `configurar_webhook.py` | Liga ou desliga o webhook no Telegram |
 | `test_*.py` | Testes. Corre-se cada um com `python test_xxx.py` |
 | `.env` | **Segredos** (token, ID). Nunca vai para o GitHub |
@@ -171,3 +173,27 @@ from servidor_web import application
 | Nada responde, sem erros | Corre `configurar_webhook.py`: mostra o "Último erro" do Telegram |
 | `Conflict ... getUpdates` | Estás a correr o `bot.py` com o webhook ligado (ver "Só um modo") |
 | Erro de ligação / `proxy` | Confirma `PROXY_URL=http://proxy.server:3128` no `.env` |
+| `A página de vagas não arrancou` | Falta o `pagina_vagas.py` ou tem um erro; o bot continua a funcionar sem a página |
+
+---
+
+## Passo D: a página de vagas do vigia (`/vagas`)
+
+A conta gratuita só tem **um** site, e é este. Por isso a página do vigia de estágios
+(`vagas.html`) também vive aqui, no endereço `https://TEUUTILIZADOR.pythonanywhere.com/vagas`,
+protegida por palavra-passe. No iPhone, "Adicionar ao ecrã principal" transforma-a numa app.
+
+- **Como chega a página:** a cada execução, o GitHub (repositório `vigia-estagios`) envia o
+  `vagas.html` para a pasta `~/dados-vigia` desta conta, pela API do PythonAnywhere.
+- **A palavra-passe** fica no ficheiro `~/vagas_senha.txt`, que crias tu na consola Bash. Não vai
+  para o GitHub nem para o código. Com menos de 12 caracteres a página recusa-se a abrir. Para a
+  mudar, edita o ficheiro: todos os aparelhos têm de voltar a entrar.
+- **Segurança:** depois de 10 tentativas erradas em 10 minutos o formulário bloqueia 10 minutos; o
+  cookie dura 90 dias, só viaja por HTTPS e não se vê pelo JavaScript. Liga **Force HTTPS** no
+  separador Web.
+- **Não mexe no bot:** são rotas à parte (`/vagas...`). O `/webhook` fica igual, e o
+  `servidor_web.py` liga a página dentro de um `try/except`, por isso se a página falhar o bot
+  continua a responder (o erro aparece no Error log).
+- **Atualizar:** `git pull` na consola e **Reload** no separador Web, como de costume.
+- O passo a passo completo (palavra-passe, token da API, segredo no GitHub) está no README do vigia,
+  na secção "Abrir no iPhone como uma app". Testes: `python test_vagas.py`.
