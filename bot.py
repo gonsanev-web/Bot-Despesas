@@ -31,7 +31,7 @@ COMANDOS = [
     BotCommand("lista", "Movimentos de uma categoria"),
     BotCommand("desfazer", "Apaga o último registo"),
     BotCommand("corrigir", "Muda a categoria do último registo"),
-    BotCommand("orcamento", "Define o orçamento semanal"),
+    BotCommand("orcamento", "Define o orçamento mensal"),
     BotCommand("avisar", "Define a percentagem do aviso"),
     BotCommand("temas", "Categorias e palavras conhecidas"),
     BotCommand("exportar", "Ficheiro CSV com tudo"),

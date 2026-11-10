@@ -2,7 +2,8 @@
 
 Bot pessoal para registar despesas no Telegram. Escreves `3,5 café` e ele guarda o valor,
 descobre a categoria sozinho (ou pergunta-te por botões e aprende) e mostra resumos,
-comparações semana a semana e um aviso quando te aproximas do orçamento.
+comparações semana a semana e um aviso quando te aproximas do orçamento do mês
+(`/orcamento 600` define o orçamento mensal; `/mes` mostra quanto já gastaste dele).
 
 Feito em Python com `python-telegram-bot` e SQLite. Só responde ao dono (o teu ID no `.env`).
 

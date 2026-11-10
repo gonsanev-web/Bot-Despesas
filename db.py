@@ -2,7 +2,6 @@
 
 import os
 import sqlite3
-from datetime import timedelta
 
 import tempo
 from parsing import normalizar, palavras_da_descricao
@@ -45,7 +44,7 @@ CREATE TABLE IF NOT EXISTS despesas (
     criada_em TEXT NOT NULL
 );
 
--- Guarda coisas soltas: orcamento_centimos, aviso_percentagem e aviso_semana
+-- Guarda coisas soltas: orcamento_mensal_centimos, aviso_percentagem e aviso_mes
 CREATE TABLE IF NOT EXISTS definicoes (
     chave TEXT PRIMARY KEY,
     valor TEXT NOT NULL
@@ -288,8 +287,8 @@ def limpar_despesas(ligacao):
     # porque estão noutras tabelas.
     cursor = ligacao.execute("DELETE FROM despesas")
     apagadas = cursor.rowcount
-    # A semana fica a zeros, por isso o aviso de orçamento pode voltar a disparar.
-    apagar_definicao(ligacao, "aviso_semana")
+    # O mês fica a zeros, por isso o aviso de orçamento pode voltar a disparar.
+    apagar_definicao(ligacao, "aviso_mes")
     ligacao.commit()
     return apagadas
 
@@ -397,13 +396,16 @@ def apagar_definicao(ligacao, chave):
 
 
 # ------------------------------------------------------ orçamento e aviso
+# O orçamento é MENSAL: conta do dia 1 ao último dia do mês. (Antes era semanal e guardava-se em
+# 'orcamento_centimos'. Esse valor antigo já não é lido: o orçamento mensal tem chave própria,
+# para um valor semanal nunca ser confundido com um mensal.)
 
 
 def ler_orcamento(ligacao):
-    """Devolve (orçamento em cêntimos ou None, percentagem do aviso). Por defeito aviso aos 80%."""
+    """Devolve (orçamento mensal em cêntimos ou None, percentagem do aviso). Por defeito aviso aos 80%."""
     # O orçamento e a percentagem estão guardados como texto na tabela definicoes. O int()
     # converte-os para números.
-    orcamento = obter_definicao(ligacao, "orcamento_centimos")
+    orcamento = obter_definicao(ligacao, "orcamento_mensal_centimos")
     percentagem = int(obter_definicao(ligacao, "aviso_percentagem", "80"))
     # Sem orçamento definido devolve None (e não 0), para o bot saber que ainda falta
     # defini-lo.
@@ -411,46 +413,50 @@ def ler_orcamento(ligacao):
 
 
 def definir_orcamento(ligacao, centimos):
-    """Define o orçamento semanal. Apaga o 'já avisei', para o novo limite poder avisar já."""
-    guardar_definicao(ligacao, "orcamento_centimos", centimos)
+    """Define o orçamento mensal. Apaga o 'já avisei', para o novo limite poder avisar já."""
+    guardar_definicao(ligacao, "orcamento_mensal_centimos", centimos)
+    apagar_definicao(ligacao, "aviso_mes")
+    # Limpa também as marcas do tempo em que o orçamento era semanal (se já não existirem, não
+    # acontece nada).
+    apagar_definicao(ligacao, "orcamento_centimos")
     apagar_definicao(ligacao, "aviso_semana")
 
 
 def definir_percentagem(ligacao, percentagem):
     """Define a percentagem do aviso (1 a 100). Também deixa o aviso disponível outra vez."""
     guardar_definicao(ligacao, "aviso_percentagem", percentagem)
-    apagar_definicao(ligacao, "aviso_semana")
+    apagar_definicao(ligacao, "aviso_mes")
 
 
-def gasto_da_semana(ligacao):
-    """Quanto gastaste desde segunda-feira (em cêntimos)."""
-    # A semana vai de segunda a domingo: o resumo conta desde esta segunda (incluída) até à
-    # segunda seguinte (excluída). O [0] no fim fica só com o total.
-    segunda = tempo.segunda_da_semana()
-    return resumo_periodo(ligacao, segunda, segunda + timedelta(days=7))[0]
+def gasto_do_mes(ligacao):
+    """Quanto gastaste neste mês, desde o dia 1 (em cêntimos)."""
+    # O mês conta do dia 1 (incluído) até ao dia 1 do mês seguinte (excluído). O [0] no fim
+    # fica só com o total.
+    primeiro = tempo.primeiro_do_mes()
+    return resumo_periodo(ligacao, primeiro, tempo.primeiro_do_mes_seguinte())[0]
 
 
 def verificar_aviso(ligacao):
     """Diz se está na hora de avisar do orçamento.
 
-    Devolve (gasto, orçamento, percentagem) se a semana passou a percentagem e ainda
-    não avisámos nesta semana. Caso contrário devolve None. Só avisa uma vez por semana.
+    Devolve (gasto, orçamento, percentagem) se o mês passou a percentagem e ainda
+    não avisámos neste mês. Caso contrário devolve None. Só avisa uma vez por mês.
     """
     orcamento, percentagem = ler_orcamento(ligacao)
     # Sem orçamento definido não há nada a avisar.
     if not orcamento:
         return None
-    # A data da segunda-feira serve de etiqueta da semana: guarda-se em que semana já
-    # avisámos, para não repetir o aviso.
-    segunda = tempo.segunda_da_semana().isoformat()
-    if obter_definicao(ligacao, "aviso_semana") == segunda:
-        return None  # já avisámos esta semana
-    gasto = gasto_da_semana(ligacao)
+    # A data do dia 1 serve de etiqueta do mês: guarda-se em que mês já avisámos, para não
+    # repetir o aviso.
+    etiqueta = tempo.primeiro_do_mes().isoformat()
+    if obter_definicao(ligacao, "aviso_mes") == etiqueta:
+        return None  # já avisámos este mês
+    gasto = gasto_do_mes(ligacao)
     # Contas com inteiros (sem dividir) para não haver erros de arredondamento
     if gasto * 100 < orcamento * percentagem:
         return None
-    # Vai avisar: regista que esta semana já foi avisada e devolve os números para a mensagem.
-    guardar_definicao(ligacao, "aviso_semana", segunda)
+    # Vai avisar: regista que este mês já foi avisado e devolve os números para a mensagem.
+    guardar_definicao(ligacao, "aviso_mes", etiqueta)
     return gasto, orcamento, percentagem
 
 
@@ -461,8 +467,8 @@ def rearmar_aviso(ligacao):
         return
     # Voltou a ficar abaixo do limite: apaga a marca de 'já avisei', para o aviso poder
     # disparar outra vez.
-    if gasto_da_semana(ligacao) * 100 < orcamento * percentagem:
-        apagar_definicao(ligacao, "aviso_semana")
+    if gasto_do_mes(ligacao) * 100 < orcamento * percentagem:
+        apagar_definicao(ligacao, "aviso_mes")
 
 
 # ---------------------------------------------------------------- relatórios

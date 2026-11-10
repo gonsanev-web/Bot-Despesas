@@ -32,7 +32,7 @@ TEXTO_AJUDA = (
     "/semana, /mes  cada gasto, por categoria\n"
     "/comparar  compara a semana ou o mês com o anterior\n"
     "/lista  movimentos de uma categoria (esta semana)\n"
-    "/orcamento 60  orçamento semanal\n"
+    "/orcamento 600  orçamento mensal\n"
     "/avisar 80  aviso quando chegares aos 80%\n"
     "/temas  categorias e palavras que o bot conhece\n"
     "/exportar  ficheiro CSV com tudo\n"
@@ -176,14 +176,14 @@ def concluir(ligacao, despesa_id, categoria_id, subcategoria_id):
 def texto_aviso(gasto, orcamento):
     """A mensagem do aviso de orçamento."""
     if gasto >= orcamento:
-        return f"Atenção: passaste o orçamento da semana ({euros(gasto)} de {euros(orcamento)})."
+        return f"Atenção: passaste o orçamento do mês ({euros(gasto)} de {euros(orcamento)})."
     # Que parte do orçamento já gastaste, em percentagem inteira (o // é a divisão sem
     # decimais).
     percentagem = gasto * 100 // orcamento
     falta = orcamento - gasto
     return (
         f"Atenção: chegaste aos {percentagem}% do orçamento "
-        f"({euros(gasto)} de {euros(orcamento)}). Faltam {euros(falta)} até domingo."
+        f"({euros(gasto)} de {euros(orcamento)}). Faltam {euros(falta)} até ao fim do mês."
     )
 
 
@@ -191,7 +191,7 @@ async def avisar_se_preciso(mensagem, ligacao):
     """Manda o aviso do orçamento, se for a altura. Vai numa mensagem à parte,
     para não desaparecer quando os botões da categoria são substituídos."""
     # verificar_aviso devolve None se não for altura de avisar (sem orçamento, abaixo do
-    # limite, ou já avisado esta semana).
+    # limite, ou já avisado este mês).
     aviso = db.verificar_aviso(ligacao)
     if aviso:
         # O '_' ignora a percentagem, que aqui não faz falta.
@@ -319,7 +319,7 @@ async def texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nome = db.nome_destino(ligacao, categoria_id, subcategoria_id)
         await mensagem.reply_text(f"{resumo(ligacao, despesa_id)}\n{nome}")
 
-    # Depois de registar, vê se a semana já chegou à percentagem do orçamento e, se sim, avisa
+    # Depois de registar, vê se o mês já chegou à percentagem do orçamento e, se sim, avisa
     # numa mensagem à parte.
     await avisar_se_preciso(mensagem, ligacao)
 
@@ -486,36 +486,38 @@ async def corrigir(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @so_dono
 async def orcamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/orcamento 60 define o orçamento semanal. Sem número, mostra o atual.
+    """/orcamento 600 define o orçamento mensal. Sem número, mostra o atual.
 
     O valor do aviso é orçamento x percentagem // 100, sempre em cêntimos inteiros.
     """
     mensagem = update.effective_message
     ligacao = ligacao_de(context)
 
-    # '/orcamento' sozinho (sem número) só mostra o orçamento atual.
+    # '/orcamento' sozinho (sem número) só mostra o orçamento mensal atual.
     if not context.args:
         valor, percentagem = db.ler_orcamento(ligacao)
         if valor is None:
-            await mensagem.reply_text("Ainda não definiste o orçamento. Usa, por exemplo: /orcamento 60")
+            await mensagem.reply_text(
+                "Ainda não definiste o orçamento mensal. Usa, por exemplo: /orcamento 600"
+            )
         else:
             await mensagem.reply_text(
-                f"Orçamento semanal: {euros(valor)}. Aviso aos {percentagem}% "
-                f"({euros(valor * percentagem // 100)}). Para mudar: /orcamento 70"
+                f"Orçamento mensal: {euros(valor)}. Aviso aos {percentagem}% "
+                f"({euros(valor * percentagem // 100)}). Para mudar: /orcamento 700"
             )
         return
 
-    # O que escreveste a seguir ao comando (o '60' de '/orcamento 60') passa para cêntimos.
+    # O que escreveste a seguir ao comando (o '600' de '/orcamento 600') passa para cêntimos.
     centimos = parse_valor(context.args[0])
     if centimos is None:
-        await mensagem.reply_text("Não percebi o valor. Exemplo: /orcamento 60")
+        await mensagem.reply_text("Não percebi o valor. Exemplo: /orcamento 600")
         return
 
     # Guarda o novo orçamento (e deixa o aviso disponível outra vez).
     db.definir_orcamento(ligacao, centimos)
     _, percentagem = db.ler_orcamento(ligacao)
     await mensagem.reply_text(
-        f"Orçamento semanal: {euros(centimos)}. "
+        f"Orçamento mensal: {euros(centimos)}. "
         f"Aviso aos {percentagem}% ({euros(centimos * percentagem // 100)})."
     )
     await avisar_se_preciso(mensagem, ligacao)  # se já passaste o novo limite, avisa logo
@@ -537,7 +539,7 @@ async def avisar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     valor, percentagem = db.ler_orcamento(ligacao)
     if valor is None:
         await mensagem.reply_text(
-            f"Aviso aos {percentagem}%. Falta definires o orçamento: /orcamento 60"
+            f"Aviso aos {percentagem}%. Falta definires o orçamento mensal: /orcamento 600"
         )
         return
     await mensagem.reply_text(
@@ -563,33 +565,33 @@ async def hoje(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @so_dono
 async def semana(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/semana: cada gasto desde segunda-feira, por categoria, e quanto do orçamento já foi."""
+    """/semana: cada gasto desde segunda-feira, por categoria. (O orçamento é mensal, por isso aparece no /mes.)"""
     ligacao = ligacao_de(context)
     # A semana vai de segunda a domingo: começamos pela segunda-feira desta semana.
     segunda = tempo.segunda_da_semana()
     # Todas as despesas da semana, de segunda a domingo, agrupadas por categoria.
     grupos = db.despesas_por_categoria(ligacao, segunda, segunda + timedelta(days=7))
-    # Só interessa o orçamento (o '_' ignora a percentagem do aviso).
-    valor, _ = db.ler_orcamento(ligacao)
     # enviar_longo parte o texto em várias mensagens se passar o limite do Telegram
     await enviar_longo(
         update.effective_message,
-        formatar_detalhado(f"Semana desde {segunda:%d/%m}", grupos, valor),
+        formatar_detalhado(f"Semana desde {segunda:%d/%m}", grupos),
     )
 
 
 @so_dono
 async def mes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/mes: cada gasto deste mês, por categoria, comparado com o mês anterior inteiro."""
+    """/mes: cada gasto deste mês, por categoria, quanto do orçamento mensal já foi e o mês anterior."""
     ligacao = ligacao_de(context)
     primeiro = tempo.primeiro_do_mes()
     # As despesas do mês inteiro, do dia 1 ao último dia, agrupadas por categoria.
     grupos = db.despesas_por_categoria(ligacao, primeiro, tempo.primeiro_do_mes_seguinte())
     # Só o total do mês anterior inteiro, para teres uma referência.
     anterior, _ = db.resumo_periodo(ligacao, tempo.primeiro_do_mes_anterior(), primeiro)
+    # O orçamento mensal (None se ainda não o definiste). O '_' ignora a percentagem do aviso.
+    valor, _ = db.ler_orcamento(ligacao)
     # MESES[primeiro.month - 1]: o mês 11 (novembro) está na posição 10 da lista, porque a
-    # lista começa em 0.
-    texto_final = formatar_detalhado(f"Mês de {MESES[primeiro.month - 1]}", grupos)
+    # lista começa em 0. Com orçamento definido, o total aparece como 'Total: X de Y (N%)'.
+    texto_final = formatar_detalhado(f"Mês de {MESES[primeiro.month - 1]}", grupos, valor)
     texto_final += f"\n\nMês anterior: {euros(anterior)}"
     await enviar_longo(update.effective_message, texto_final)
 

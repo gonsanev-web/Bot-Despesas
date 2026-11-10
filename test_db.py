@@ -59,8 +59,9 @@ db.classificar_despesa(ligacao, id2, refeicoes, None)
 assert db.obter_despesa(ligacao, id2)[:2] == (1000, "gelado")
 print("guardar: certo")
 
-# --- 4. períodos (esta semana, e uma despesa de há 8 dias que fica de fora)
-db.guardar_despesa(ligacao, 5000, "velho", None, None, quando=tempo.agora() - timedelta(days=8))
+# --- 4. períodos (esta semana e este mês, e uma despesa de há 40 dias que fica de fora dos dois:
+# 40 dias é mais do que qualquer mês, por isso cai sempre num mês anterior)
+db.guardar_despesa(ligacao, 5000, "velho", None, None, quando=tempo.agora() - timedelta(days=40))
 segunda = tempo.segunda_da_semana()
 fim = segunda + timedelta(days=7)
 total, por_categoria = db.resumo_periodo(ligacao, segunda, fim)
@@ -69,15 +70,25 @@ assert por_categoria == [("Refeições", 1350)]
 movimentos = db.listar_movimentos(ligacao, refeicoes, segunda, fim)
 assert [(d, c) for _, d, c in movimentos] == [("café", 350), ("gelado", 1000)]
 assert db.listar_movimentos(ligacao, None, segunda, fim) == []  # nada sem categoria
+assert db.gasto_do_mes(ligacao) == 1350  # o "velho" (de há 40 dias) não conta para o mês
 print("períodos: certo")
 
-# --- 5. orçamento e aviso
+# --- 5. orçamento (mensal) e aviso
 assert db.verificar_aviso(ligacao) is None  # sem orçamento definido
-db.definir_orcamento(ligacao, 2000)  # 20 €, aviso aos 80% (16 €)
+db.guardar_definicao(ligacao, "orcamento_centimos", 100)  # um orçamento SEMANAL antigo (1 €)
+assert db.ler_orcamento(ligacao) == (None, 80)  # é ignorado: o orçamento mensal tem chave própria
+assert db.verificar_aviso(ligacao) is None  # e por isso não avisa nada
+db.definir_orcamento(ligacao, 2000)  # 20 € por mês, aviso aos 80% (16 €)
+assert db.ler_orcamento(ligacao) == (2000, 80)
+assert db.obter_definicao(ligacao, "orcamento_centimos") is None  # a marca antiga foi limpa
 assert db.verificar_aviso(ligacao) is None  # 13,50 € ainda não chega
 db.guardar_despesa(ligacao, 300, "extra", refeicoes, None)  # 16,50 €
 assert db.verificar_aviso(ligacao) == (1650, 2000, 80)
-assert db.verificar_aviso(ligacao) is None  # só avisa uma vez por semana
+assert db.verificar_aviso(ligacao) is None  # só avisa uma vez por mês
+# Faz de conta que o aviso foi dado num mês anterior: no mês novo já pode avisar outra vez.
+db.guardar_definicao(ligacao, "aviso_mes", "2000-01-01")
+assert db.verificar_aviso(ligacao) == (1650, 2000, 80)
+assert db.verificar_aviso(ligacao) is None  # e volta a ficar quieto até ao mês seguinte
 assert db.apagar_ultima(ligacao) == (300, "extra")  # volta abaixo do limite: rearma o aviso
 db.guardar_despesa(ligacao, 300, "extra", refeicoes, None)
 assert db.verificar_aviso(ligacao) == (1650, 2000, 80)  # avisa outra vez
